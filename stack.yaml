@@ -3,5 +3,8 @@ extra-package-dbs: []
 packages:
 - '.'
 extra-deps:
-- fast-tagsoup-1.0.11
+- chatter-0.9.0.0
+- cereal-text-0.1.0.2
+- fullstop-0.1.4
+- tokenize-0.3.0
 resolver: lts-5.14
