@@ -16,6 +16,7 @@ import Text.Regex.TDFA ((=~))
 import Text.Regex
 
 import NLP.POS
+import NLP.Types
 import NLP.Tokenize.String
 
 type Url = String
@@ -26,10 +27,10 @@ replaceReg :: String -> String -> String -> String
 replaceReg regex replacement = flip (subRegex (mkRegex regex)) replacement
 
 randomUrl :: Url
-randomUrl = "https://en.wikipedia.org/wiki/Special:Random"
+randomUrl = "https://fr.wikipedia.org/wiki/Spécial:Page_au_hasard"
 
 makeWikipediaUrl :: String -> Url
-makeWikipediaUrl = ( "https://en.wikipedia.org/wiki/" ++ )
+makeWikipediaUrl = ( "https://fr.wikipedia.org/wiki/" ++ )
 
 fetchPageCandidate :: Url -> IO Page
 fetchPageCandidate url = do
@@ -57,7 +58,9 @@ fetchPage url = do
   then do
     putStrLn "was a page list, fetch another"
     (fetchPage url)
-  else (return $ cleanSentences page)
+  else do
+    putStrLn .concat $ text (cleanSentences page)
+    (return $ cleanSentences page)
 
 cleanSentences :: Page -> Page
 cleanSentences (Page topic paragraphs) =
@@ -69,7 +72,7 @@ cleanSentences (Page topic paragraphs) =
       sentences = splitRegex (mkRegex "\\. ") cleanedContent
    in Page topic sentences
 
--- tagPage :: PosTagger Tag -> Page -> [[String]]
+tagPage :: POSTagger RawTag -> Page -> [[String]]
 tagPage tagger page = filter hasVerb taggedSentences
   where
     taggedSentences = fmap tagSentence (text page)
@@ -78,14 +81,14 @@ tagPage tagger page = filter hasVerb taggedSentences
     tagSentence s = fmap (tagStr tagger) (tokenize s)
 
     hasVerb :: [String] -> Bool
-    hasVerb = any ("/VB" `isInfixOf`)
+    hasVerb = any ("/V" `isInfixOf`)
 
 mergeSentences :: ([String],[String]) -> String
 mergeSentences (primary, secondary) = tagsToSentence $ (fst $ splitVerb primary) ++ (snd $ splitVerb secondary)
   where
     splitVerb :: [String] -> ([String], [String])
     splitVerb tags = (untilVerb, afterVerb) where
-      (begin, end) = break ("/VB" `isInfixOf`) tags
+      (begin, end) = break ("/V" `isInfixOf`) tags
       untilVerb = begin ++ [head end]
       afterVerb = tail end
 
@@ -101,11 +104,15 @@ mergeSentences (primary, secondary) = tagsToSentence $ (fst $ splitVerb primary)
       replaceReg " \\." "." .
       replaceReg " \\," "."
 
+
 main :: IO ()
 main = do
   args <- getArgs
   [page1, page2] <- mapM fetchPage $ parseArgs args
-  tagger <- defaultTagger
+  -- tagger <- defaultTagger
+  putStrLn "Loading model..."
+  tagger <- (loadTagger "src/head1000.model":: IO (POSTagger RawTag))
+  putStrLn "...model loaded."
   let facts = fmap mergeSentences $ zip (tagPage tagger page1) (tagPage tagger page2)
   putStrLn "\n================================="
   putStrLn $ topic page1 ++ " + " ++ topic page2
