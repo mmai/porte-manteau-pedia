@@ -12,13 +12,11 @@ import Data.Text.Encoding
 import Network.Wreq
 import Control.Lens ((^.))
 import qualified Data.ByteString.Lazy as BL
-import qualified Data.ByteString.Char8 as C8
-
 
 import Text.XML.HXT.Core
 import Text.HandsomeSoup
 
-import Data.Attoparsec.Text
+import Data.Attoparsec.Text as Atto
 
 import NLP.POS
 import NLP.Types
@@ -37,8 +35,7 @@ makeWikipediaUrl = ( "https://fr.wikipedia.org/wiki/" ++ )
 fetchPageCandidate :: Url -> IO Page
 fetchPageCandidate url = do
   r <- get url
-  let doc = readString [withParseHTML yes, withWarnings no] . C8.unpack . BL.toStrict $ r ^. responseBody
-  -- let doc = fromUrl url
+  let doc = readString [withParseHTML yes, withWarnings no, withInputEncoding utf8] . T.unpack . decodeUtf8 . BL.toStrict $ r ^. responseBody
   topics <- runX $ doc >>> css "h1" /> getText
   paragraphs <- runX $ doc //> hasAttrValue "id" (== "mw-content-text") /> hasName "p" //> getText
   if (url == randomUrl && length topics == 0 )
@@ -63,37 +60,29 @@ fetchPage url = do
     putStrLn "was a page list, fetch another"
     (fetchPage url)
   else do
-    -- T.putStrLn . T.concat $ text (cleanSentences page)
+    -- putStrLn . T.unpack . T.concat $ text page
     (return $ cleanSentences page)
 
 cleanSentences :: Page -> Page
 cleanSentences (Page topic paragraphs) =
   let content =  T.unwords $  T.words $  T.intercalate " " paragraphs
-      Done _ cleanedContent = parse removeParBrac content
-      Done _ sentences = parse (splitBy '.') cleanedContent
+      Right cleanedContent = parseOnly removeParBrac content
+      Right sentences = parseOnly (splitBy '.') cleanedContent
    in Page topic sentences
 
 splitBy :: Char -> Parser [T.Text]
-splitBy c = takeTill (== c) `sepBy` (char '.')
+splitBy c = Atto.takeWhile (/= c) `sepBy` (char c)
 
 removeParBrac :: Parser T.Text
-removeParBrac = fmap T.concat $ many' $ do
-  skipParen
-  skipBrac
-  content <- takeTill (\c -> c == '(' || c == '[')
-  skipParen
-  skipBrac
-  return content
+removeParBrac = fmap T.concat $ manyTill removeOnePar endOfInput
 
-skipParen = skipDelimited '(' ')'
-skipBrac = skipDelimited '[' ']'
+removeOnePar = do
+  skipMany $ delimitedParser '(' ')'
+  skipMany $ delimitedParser '[' ']'
+  Atto.takeWhile (\c -> c /= '(' && c /= '[')
 
-skipDelimited :: Char -> Char -> Parser T.Text
-skipDelimited begin end = do
-  char begin
-  takeTill (== end)
-  char end
-  return T.empty
+delimitedParser :: Char -> Char -> Parser T.Text
+delimitedParser begin end = char begin *> Atto.takeWhile (/= end) *> char end *> return T.empty
 
 tagPage :: POSTagger RawTag -> Page -> [[T.Text]]
 tagPage tagger page = filter hasVerb taggedSentences
@@ -116,16 +105,10 @@ mergeSentences (primary, secondary) = tagsToSentence $ (fst $ splitVerb primary)
       afterVerb = tail end
 
     tagsToSentence :: [T.Text] -> T.Text
-    tagsToSentence tags = cleanSentence .  ( T.intercalate " ") $ fmap tagToWord tags
+    tagsToSentence tags = ( T.intercalate " ") $ fmap tagToWord tags
 
     tagToWord :: T.Text -> T.Text
     tagToWord = (T.dropEnd 1) . (T.dropWhileEnd (/= '/'))
-
-    cleanSentence :: T.Text -> T.Text
-    cleanSentence = id
-      -- replaceReg " \\." "." .
-      -- replaceReg " \\," "."
-
 
 main :: IO ()
 main = do
@@ -144,3 +127,5 @@ parseArgs (arg1:(arg2:_)) = [makeWikipediaUrl arg1, makeWikipediaUrl arg2]
 parseArgs [arg] = [makeWikipediaUrl arg, randomUrl]
 parseArgs [] = [randomUrl, randomUrl]
 
+-- tests
+str = T.pack "un (deux) trois [quatre] cinq"
